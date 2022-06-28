@@ -11,7 +11,7 @@ def Diff(li1, li2):
     return li_dif
 
 def merge_hit(hit1, hit2, outvcf):
-    #merge the two hits; keep positions in hit1, because it is the 'primary'
+    #merge the two hits; keep positions in hit1 because it is the 'primary'
     start = hit1.START1 #min(hit1.START1, hit2.START1)
     stop = hit1.END2 #max(hit1.END2, hit2.END2)
     chrom = hit1.CHROM1
@@ -49,6 +49,7 @@ def update_row(row, hit):
     new_row['FORMAT1'] = [hit['format_val']]
     new_row['FORMAT2'] = [hit['format_val']]
     new_row['REVCOMP'] = row.REVCOMP
+    new_row['ORIENT'] = row.ORIENT
     new_row['SVTYPE'] = row.SVTYPE
     new_row['REF'] = row.REF
     new_row['ALT'] = row.ALT
@@ -68,7 +69,7 @@ def svtobedpedf(vcf,sample=0):
     verbose = False
     
     # read in vcf records to a bedpe-type pandas object.
-    hdr = ['CHROM1','START1','END1','ID1','FILTERS1','QUAL1','INFO1','FORMAT1','CHROM2','START2','END2','ID2','FILTERS2','QUAL2','INFO2','FORMAT2','REVCOMP','SVTYPE','REF','ALT']
+    hdr = ['CHROM1','START1','END1','ID1','FILTERS1','QUAL1','INFO1','FORMAT1','CHROM2','START2','END2','ID2','FILTERS2','QUAL2','INFO2','FORMAT2','REVCOMP','ORIENT','SVTYPE','REF','ALT']
     vcfdf = pd.DataFrame(columns = hdr)
 
     for rec in vcf.fetch():
@@ -112,6 +113,10 @@ def svtobedpedf(vcf,sample=0):
 
         # are the SV ends reversed complemented? for dels and dups, no. For inversions, yes. see below for BNDs
         revcomp = 0
+
+        # orientation of strands for BND only. all else None
+        orient = None
+
         if svtype == 'INV':
             revcomp = 1
         
@@ -131,6 +136,15 @@ def svtobedpedf(vcf,sample=0):
         
             if (m.group(1) != '' and m.group(2) == ']') or (m.group(2) == '[' and m.group(6) != ''):
                 revcomp = 1
+
+            if (m.group(1) != '' and m.group(2) == '['): # t[p[
+                orient = 1
+            elif (m.group(1) != '' and m.group(2) == ']'): # t]p]
+                orient = 2
+            elif (m.group(1) == '' and m.group(2) == ']'): # ]p]t
+                orient = 3
+            else: # [p[t
+                orient = 4
 
         # now add to df
         info = {}
@@ -153,7 +167,7 @@ def svtobedpedf(vcf,sample=0):
             
         else:
             # remember: hdr = ['CHROM1','START1','END1','ID1','FILTERS1','QUAL1','INFO1','FORMAT1','CHROM2','START2','END2','ID2','FILTERS2','QUAL2','INFO2','FORMAT2','REVCOMP','SVTYPE','REF','ALT']            
-            lst = [contig1,start1,end1,rec.id,rec.filter.keys(),rec.qual,info,fmt,contig2,start2,end2,rec.id,rec.filter.keys(),rec.qual,info,fmt,revcomp,svtype,rec.ref,','.join(rec.alts)]
+            lst = [contig1,start1,end1,rec.id,rec.filter.keys(),rec.qual,info,fmt,contig2,start2,end2,rec.id,rec.filter.keys(),rec.qual,info,fmt,revcomp,orient,svtype,rec.ref,','.join(rec.alts)]
             vcfdf = pd.concat([vcfdf, pd.DataFrame.from_records([dict(zip(vcfdf.columns.tolist(),lst))])])
 
         if verbose:
@@ -171,7 +185,7 @@ parser.add_argument('vcf2',help='VCF 2, which is the secondary VCF')
 parser.add_argument('outvcf',help='Merged VCF')
 parser.add_argument('-n',"--name",help='New sample name to use (default: use primary VCF sample name')
 parser.add_argument('-s',"--slop",default=0,help='window around BND breakpoints permitted for merging (default: no slop)')
-parser.add_argument('-r',"--roverlap",default=1.0,help='Reciprocal overlap required to merge DEL/DUP (default: 100% overlap)')
+parser.add_argument('-r',"--roverlap",default=1.0,help='Reciprocal overlap required to merge DEL/DUP (default: 100 percent overlap)')
 parser.add_argument('-a',"--all",default=False,help='Include all SV calls in output (default: only merged calls are included)')
 parser.add_argument('-i',"--info",default=None,help='Comma-separated INFO tags in secondary VCF to include in merged records. eg: +ABC/ABC will be added, -ABC will be skipped (default: all new tags)')
 parser.add_argument('-f',"--format",default=None,help='Comma-separated FORMAT tags in secondary VCF to include in merged records. eg: +ABC/ABC will be added, -ABC will be skipped (default: all new tags; gt field is not added)')
@@ -260,7 +274,7 @@ outvcf.header.add_line(info_tag)
 
 vcf1df = svtobedpedf(vcf1)
 vcf1df = vcf1df.reset_index(drop=True)
-vcf1f = vcf1df.astype({'START1': int, 'START2': int, 'END1': int, 'END2': int})
+vcf1df = vcf1df.astype({'START1': int, 'START2': int, 'END1': int, 'END2': int})
 
 print("Loaded " + str(vcf1df.shape[0]) + " valid records from " + str(args.vcf1), file=sys.stderr)
 vcf1.close()
@@ -272,81 +286,117 @@ vcf2df = vcf2df.astype({'START1': int, 'START2': int, 'END1': int, 'END2': int})
 print("Loaded " + str(vcf2df.shape[0]) + " valid records from " + str(args.vcf2), file=sys.stderr)
 vcf2.close()
 
-# remember: hdr = ['CHROM1','START1','END1','ID1','FILTERS1','QUAL1','INFO1','FORMAT1','CHROM2','START2','END2','ID2','FILTERS2','QUAL2','INFO2','FORMAT2','REVCOMP','SVTYPE']
+# remember: hdr = ['CHROM1','START1','END1','ID1','FILTERS1','QUAL1','INFO1','FORMAT1','CHROM2','START2','END2','ID2','FILTERS2','QUAL2','INFO2','FORMAT2','REVCOMP','ORIENT','SVTYPE']
 count=0
+
 for row in vcf1df.itertuples():
     if row.SVTYPE in cnvtypes: # DEL,DUP,TANDEM:DUP,
-            hit = row
-            h_ids = [] #these are for keeping track of the indices to be dropped from the df after the merging is complete.
-            no_merged = True #Checks whether any variants in vcf2 merged with row
-        
-            hits = vcf2df[(vcf2df['CHROM1']==row.CHROM1) & \
-                                  (vcf2df['CHROM2']==row.CHROM2) & \
-                                  (vcf2df['END2']>=row.START1) & \
-                                  (vcf2df['START1']<=row.END2)]
+        hit = row
+        h_ids = [] #these are for keeping track of the indices to be dropped from the df after the merging is complete.
+        no_merged = True #Checks whether any variants in vcf2 merged with row
+    
+        hits = vcf2df[(vcf2df['CHROM1']==row.CHROM1) & \
+                      (vcf2df['CHROM2']==row.CHROM2) & \
+                      (vcf2df['END2']>=row.START1) & \
+                      (vcf2df['START1']<=row.END2)]
 
-            for h in hits.itertuples():
-                if row.START1 != row.END1:
-                    row_left = round((row.START1+row.END1)/2)
-                else:
-                    row_left = row.START1
+        for h in hits.itertuples():
+            if row.START1 != row.END1:
+                row_left = round((row.START1+row.END1)/2)
+            else:
+                row_left = row.START1
 
-                if row.START2 != row.END2:
-                    row_right = round((row.START2+row.END2)/2)
-                else:
-                    row_right = row.END2
+            if row.START2 != row.END2:
+                row_right = round((row.START2+row.END2)/2)
+            else:
+                row_right = row.END2
 
-                if h.START1 != h.END1:
-                    h_left = round((h.START1+h.END1)/2)
-                else:
-                    h_left = h.START1
+            if h.START1 != h.END1:
+                h_left = round((h.START1+h.END1)/2)
+            else:
+                h_left = h.START1
 
-                if h.START2 != h.END2:
-                    h_right = round((h.START2+h.END2)/2)
-                else:
-                    h_right = h.END2
+            if h.START2 != h.END2:
+                h_right = round((h.START2+h.END2)/2)
+            else:
+                h_right = h.END2
 
+            overlap = abs(max(row_left, h_left)-min(row_right, h_right))
+
+            if row_left != row_right:
+                row_fraction = overlap/abs(row_left-row_right)
+            else:
+                row_left -= slop
+                row_right += slop
                 overlap = abs(max(row_left, h_left)-min(row_right, h_right))
+                row_fraction = overlap/abs(row_left-row_right)
 
-                if row_left != row_right:
-                    row_fraction = overlap/abs(row_left-row_right)
-                else:
-                    row_left -= slop
-                    row_right += slop
-                    overlap = abs(max(row_left, h_left)-min(row_right, h_right))
-                    row_fraction = overlap/abs(row_left-row_right)
+            if h_left != h_right:
+                h_fraction = overlap/abs(h_left-h_right)
+            else:
+                h_left -= slop
+                h_right += slop
+                overlap = abs(max(row_left, h_left)-min(row_right, h_right))
+                h_fraction = overlap/abs(h_left-h_right)
 
-                if h_left != h_right:
-                    h_fraction = overlap/abs(h_left-h_right)
-                else:
-                    h_left -= slop
-                    h_right += slop
-                    overlap = abs(max(row_left, h_left)-min(row_right, h_right))
-                    h_fraction = overlap/abs(h_left-h_right)
+            if (h_fraction >= roverlap) & (row_fraction >= roverlap):
+                hit = merge_hit(hit, h, outvcf)
+                row = update_row(row, hit)
+                hit = row
+                h_ids.append(h.Index)
+                no_merged = False
 
-                if (h_fraction >= roverlap) & (row_fraction >= roverlap):
-                    hit = merge_hit(hit, h, outvcf)
-                    row = update_row(row, hit)
-                    hit = row
-                    h_ids.append(h.Index)
-                    no_merged = False
+        hit = merge_hit(hit, hit, outvcf)
+        if no_merged:
+            hit['id_val'] = row.ID1
+        hit = vcfdict2vcf(hit, outvcf)
+        outvcf.write(hit)
+        h_ids = list(set(h_ids))
+        vcf1df = vcf1df.drop(row.Index)
+        vcf2df = vcf2df.drop(h_ids)
 
-            hit = merge_hit(hit, hit, outvcf)
-            if no_merged:
-                hit['id_val'] = row.ID1
-            hit = vcfdict2vcf(hit, outvcf)
-            outvcf.write(hit)
-            h_ids = list(set(h_ids))
-            vcf1df = vcf1df.drop(row.Index)
-            vcf2df = vcf2df.drop(h_ids)
+    elif row.SVTYPE in bndtypes: #BND, INV
+        hit = row
+        h_ids = [] #these are for keeping track of the indices to be dropped from the df after the merging is complete.
+        no_merged = True #Checks whether any variants in vcf2 merged with row
+
+        for h in vcf2df[vcf2df['SVTYPE'].isin(bndtypes)].itertuples():
+            if row.START1 <= h.START1 and h.START1 - row.END1 <= slop: #slop used for two purposes. Need to fix.
+                check1 = True
+            elif row.START1 - h.END1 <= slop:
+                check1 = True
+            if row.START2 <= h.START2 and h.START2 - row.END2 <= slop:
+                check2 = True
+            elif row.START2 - h.END2 <= slop:
+                check2 = True
+
+            if check1 and check2 and row.ORIENT==h.ORIENT:
+                hit = merge_hit(hit, h, outvcf)
+                row = update_row(row, hit)
+                hit = row
+                h_ids.append(h.Index)
+                no_merged = False
+
+        hit = merge_hit(hit, hit, outvcf)
+        if no_merged:
+            hit['id_val'] = row.ID1
+        hit = vcfdict2vcf(hit, outvcf)
+        outvcf.write(hit)
+        h_ids = list(set(h_ids))
+        vcf1df = vcf1df.drop(row.Index)
+        vcf2df = vcf2df.drop(h_ids)
 
 for row in vcf2df.itertuples():
+    if row.SVTYPE == 'INS':
+        continue
     hit = merge_hit(row, row, outvcf)
     hit['id_val'] = row.ID1
     hit = vcfdict2vcf(hit, outvcf)
     outvcf.write(hit)
 
 for row in vcf1df.itertuples():
+    if row.SVTYPE == 'INS':
+        continue
     hit = merge_hit(row, row, outvcf)
     hit['id_val'] = row.ID1
     hit = vcfdict2vcf(hit, outvcf)
