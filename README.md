@@ -8,7 +8,7 @@ Written in Python 3. Requires [pandas](https://pandas.pydata.org/) and [pysam](h
 ```bash
 python sv_merge.py [options] input1.vcf input2.vcf outfile.vcf
 ```
-
+```
 Options:
 -n, --namehelp #New sample name to use (default: use primary VCF sample name)
 -s, --slop #window around BND breakpoints permitted for merging (default: no slop)
@@ -18,3 +18,4 @@ Options:
 -f, --format #Comma-separated FORMAT tags in secondary VCF to include in merged records. eg: +ABC/ABC will be added, -ABC will be skipped (default: all new tags; gt field is not added)
 -t, --filters #Filters in secondary VCF to include in merged records. eg: +ABC will be added, -ABC will be skipped (default: all new filters)
 -c, --correct #Adjust symbolic start and end to be the midpoint of the merged records and add IMPRECISE and CIPOS info tags (default: keep primary record coordinates)
+```
