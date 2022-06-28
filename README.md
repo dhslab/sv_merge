@@ -7,6 +7,7 @@ Written in Python 3. Requires [pandas](https://pandas.pydata.org/) and [pysam](h
 ## Usage
 ```bash
 python sv_merge.py [options] input1.vcf input2.vcf outfile.vcf
+```
 
 Options:
 -n, --namehelp #New sample name to use (default: use primary VCF sample name)
